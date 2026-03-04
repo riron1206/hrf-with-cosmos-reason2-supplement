@@ -1,0 +1,25 @@
+site_name: HRF Supplement (Readable)
+site_url: https://<YOUR_GITHUB>.github.io/hrf-with-cosmos-reason2-supplement/
+repo_url: https://github.com/<YOUR_GITHUB>/hrf-with-cosmos-reason2-supplement
+
+theme:
+  name: material
+  language: ja
+  features:
+    - navigation.sections
+    - navigation.top
+    - toc.follow
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Supplement: index.md
