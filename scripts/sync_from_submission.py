@@ -17,42 +17,38 @@ def fetch_text(url: str) -> str:
 
 def normalize_for_mkdocs(md: str) -> str:
     """
-    GitHub(GFM)だとそれっぽく見えるが、MkDocs(Python-Markdown)では
-    表や箇条書きが崩れる「改行不足/1行化」を最低限補正する。
+    GFMでは“それっぽく”表示されるが、MkDocs(Python-Markdown)では崩れる
+    「1行に潰れたMarkdown」を、最低限 “改行のあるMarkdown” に整形する。
 
     重点:
-      - 見出しの直後に本文が同一行で続くのを分離
-      - コロンの後に表が続くのを分離
-      - 箇条書きが文中に潰れているのを分離
-      - 表(パイプ)が同一行に潰れているのを分離（簡易）
+      - 見出し(#, ##, ### ...)の前に必ず改行を入れる（###を壊さない）
+      - 1行テーブルを 行ごとに改行してテーブルとして成立させる
+      - コロン後の箇条書きも改行して箇条書きとして成立させる
     """
     md = md.replace("\r\n", "\n").replace("\r", "\n")
 
-    # 1) 見出し前に空行を確保（前の段落とくっついてるのを防ぐ）
-    md = re.sub(r"(?<!\n)(#{2,6}\s+)", r"\n\n\1", md)
+    # (A) 見出しを壊さずに分離する
+    # 先頭 or 空白の後に来る "#... " を、前に空行を入れて行頭に寄せる
+    # 例: " ... ## Title ..." -> "\n\n## Title ..."
+    md = re.sub(r"(^|\s)(#{1,6})\s+", r"\n\n\2 ", md)
 
-    # 2) 見出し行の末尾に本文が続いてしまうパターンを分離
-    #    例: "## Title This is ..." -> "## Title\n\nThis is ..."
-    md = re.sub(
-        r"^(#{2,6}\s+[^\n#]+?)\s+(?=[A-Za-z0-9(])",
-        r"\1\n\n",
-        md,
-        flags=re.MULTILINE,
-    )
+    # (B) 「: - 」で始まる“潰れた箇条書き”を分離
+    # 例: "**Real-world applications**: - **Autonomous** ..." -> "...\n\n- **Autonomous** ..."
+    md = re.sub(r":\s+-\s+", ":\n\n- ", md)
 
-    # 3) コロンの直後に表が続くパターンを分離
-    #    例: "Example: | A | B |" -> "Example:\n\n| A | B |"
-    md = re.sub(r":\s+\|", r":\n\n|", md)
+    # (C) テーブルを成立させる：行頭の "| " を行頭に置く
+    # 元は "...: | A | B | |---|---| | x | y | ..." のように 1行に潰れている。
+    # ルール: " | |" という“行の境界”を、改行 + "|" に変える。
+    md = md.replace(" | |", "\n|")
 
-    # 4) 箇条書きが文中に潰れているのを分離
-    #    例: "... needed. - **Foo** ..." -> "... needed.\n- **Foo** ..."
-    md = re.sub(r"\s+-\s+\*\*", r"\n- **", md)
+    # さらに「テーブル開始」が文中にある場合に備えて、
+    # ": |" または ". |" の後の "| ..." を改行してテーブル開始扱いにする
+    md = re.sub(r"([:.])\s+\|", r"\1\n\n|", md)
 
-    # 5) 表の行が同一行に潰れているのをある程度分離
-    #    よくある: "| a | b | | c | d |" 形式
-    md = md.replace(" | |", "\n| |")
+    # (D) 箇条書きが文中に潰れているのを分離（- ** 以外も拾う）
+    md = re.sub(r"\s+-\s+", r"\n- ", md)
 
-    # 6) 余計な行末スペースを削除
+    # (E) 余計な行末スペース除去
     md = re.sub(r"[ \t]+\n", "\n", md)
 
     return md
@@ -60,14 +56,9 @@ def normalize_for_mkdocs(md: str) -> str:
 
 def rewrite_relative_links(md: str) -> str:
     """
-    Rewrite relative URLs so the rendered site can resolve assets and files.
-
-    - Images: ![alt](relative.png) -> ![alt](RAW_BASE/relative.png)
-    - Links:  [text](relative.md)  -> [text](BLOB_BASE/relative.md)
-
-    Keep absolute URLs (http/https), anchors (#...), mailto untouched.
+    - Images: ![alt](relative.png) -> RAW_BASE/relative.png
+    - Links:  [text](relative.md)  -> BLOB_BASE/relative.md
     """
-
     def is_relative(url: str) -> bool:
         return (
             not re.match(r"^(https?:)?//", url)
@@ -75,7 +66,6 @@ def rewrite_relative_links(md: str) -> str:
             and not url.startswith("mailto:")
         )
 
-    # Images: ![...](...)
     def repl_img(m):
         alt, url = m.group(1), m.group(2).strip()
         if is_relative(url):
@@ -84,7 +74,6 @@ def rewrite_relative_links(md: str) -> str:
 
     md = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", repl_img, md)
 
-    # Links (exclude images): [...](...)
     def repl_link(m):
         text, url = m.group(1), m.group(2).strip()
         if is_relative(url):
@@ -99,10 +88,7 @@ def main():
     src_url = f"{RAW_BASE}/{SOURCE_MD_PATH}"
     md = fetch_text(src_url)
 
-    # ★追加：MkDocs向けに改行整形
     md = normalize_for_mkdocs(md)
-
-    # 既存：リンク/画像URLの書き換え
     md = rewrite_relative_links(md)
 
     header = f"""<!--
