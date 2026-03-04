@@ -17,39 +17,54 @@ def fetch_text(url: str) -> str:
 
 def normalize_for_mkdocs(md: str) -> str:
     """
-    GFMでは“それっぽく”表示されるが、MkDocs(Python-Markdown)では崩れる
-    「1行に潰れたMarkdown」を、最低限 “改行のあるMarkdown” に整形する。
-
-    重点:
-      - 見出し(#, ##, ### ...)の前に必ず改行を入れる（###を壊さない）
-      - 1行テーブルを 行ごとに改行してテーブルとして成立させる
-      - コロン後の箇条書きも改行して箇条書きとして成立させる
+    GitHub(GFM)では“それっぽく”表示されても、MkDocs(Python-Markdown)では
+    表や箇条書きが崩れる「改行不足/1行化」を最低限補正する。
     """
     md = md.replace("\r\n", "\n").replace("\r", "\n")
 
-    # (A) 見出しを壊さずに分離する
-    # 先頭 or 空白の後に来る "#... " を、前に空行を入れて行頭に寄せる
-    # 例: " ... ## Title ..." -> "\n\n## Title ..."
+    # (A) 見出しの前に空行を入れる（### を壊さない）
+    # 先頭または空白の後に "#... " が来たら、前を段落区切りにする
     md = re.sub(r"(^|\s)(#{1,6})\s+", r"\n\n\2 ", md)
 
-    # (B) 「: - 」で始まる“潰れた箇条書き”を分離
-    # 例: "**Real-world applications**: - **Autonomous** ..." -> "...\n\n- **Autonomous** ..."
+    # (B) コロン直後の箇条書きが潰れているのを分離
+    # 例: "...: - foo - bar" -> "...:\n\n- foo\n- bar"
     md = re.sub(r":\s+-\s+", ":\n\n- ", md)
 
-    # (C) テーブルを成立させる：行頭の "| " を行頭に置く
-    # 元は "...: | A | B | |---|---| | x | y | ..." のように 1行に潰れている。
-    # ルール: " | |" という“行の境界”を、改行 + "|" に変える。
+    # (C) テーブル行が 1 行に潰れているのを分離
+    # よくある: "| a | b | | --- | --- | | x | y |"
     md = md.replace(" | |", "\n|")
 
-    # さらに「テーブル開始」が文中にある場合に備えて、
-    # ": |" または ". |" の後の "| ..." を改行してテーブル開始扱いにする
+    # テーブル開始が文中に埋まっているケース（例: "Example: | A | B |"）
     md = re.sub(r"([:.])\s+\|", r"\1\n\n|", md)
 
-    # (D) 箇条書きが文中に潰れているのを分離（- ** 以外も拾う）
+    # (D) 箇条書きが文中に潰れているのを分離（- の前に改行）
+    # ただし数式等を壊しにくいよう「スペース + - + スペース」を対象にする
     md = re.sub(r"\s+-\s+", r"\n- ", md)
 
-    # (E) 余計な行末スペース除去
+    # (E) 余計な行末スペースを削除
     md = re.sub(r"[ \t]+\n", "\n", md)
+
+    return md
+
+
+def patch_image_placeholders(md: str) -> str:
+    """
+    元の project_features.md に残っている "" 等のプレースホルダを
+    実在する画像(GIF)の Markdown に置換する。
+    """
+    # 100_app (Web Application)
+    md = md.replace(
+        "### Web Application ([100_app](./100_app/)) ",
+        "### Web Application ([100_app](./100_app/))\n\n"
+        f"![]({RAW_BASE}/100_app/assets/app_sample_4x.gif)\n",
+    )
+
+    # 005_2coool-studio (Blind A/B Testing Tool)
+    md = md.replace(
+        "### Blind A/B Testing Tool ([005_2coool-studio](./005_2coool-studio/)) ",
+        "### Blind A/B Testing Tool ([005_2coool-studio](./005_2coool-studio/))\n\n"
+        f"![]({RAW_BASE}/005_2coool-studio/assets/2coool-studio_sample_light.gif)\n",
+    )
 
     return md
 
@@ -58,6 +73,7 @@ def rewrite_relative_links(md: str) -> str:
     """
     - Images: ![alt](relative.png) -> RAW_BASE/relative.png
     - Links:  [text](relative.md)  -> BLOB_BASE/relative.md
+    keep absolute URLs (http/https), anchors (#...), mailto untouched
     """
     def is_relative(url: str) -> bool:
         return (
@@ -66,6 +82,7 @@ def rewrite_relative_links(md: str) -> str:
             and not url.startswith("mailto:")
         )
 
+    # Images: ![...](...)
     def repl_img(m):
         alt, url = m.group(1), m.group(2).strip()
         if is_relative(url):
@@ -74,6 +91,7 @@ def rewrite_relative_links(md: str) -> str:
 
     md = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", repl_img, md)
 
+    # Links (exclude images): [...](...)
     def repl_link(m):
         text, url = m.group(1), m.group(2).strip()
         if is_relative(url):
@@ -88,7 +106,13 @@ def main():
     src_url = f"{RAW_BASE}/{SOURCE_MD_PATH}"
     md = fetch_text(src_url)
 
+    # 1) MkDocs向けに改行整形
     md = normalize_for_mkdocs(md)
+
+    # 2) 画像プレースホルダを実画像へ
+    md = patch_image_placeholders(md)
+
+    # 3) 相対リンクを GitHub / raw に変換
     md = rewrite_relative_links(md)
 
     header = f"""<!--
